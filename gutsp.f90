@@ -124,17 +124,20 @@ module gutsp
       subroutine get_Ep()
             use dimensions
             use grid_interp
-            use var_arrays, only: Ep,aj,up,btc,Ni_tot,ijkp,mrat,wght,grav, gradP
-            use inputs, only: mion
+            use var_arrays, only: Ep,aj,up,btc,Ni_tot,ijkp,mrat,wght,grav, gradP, xp, vp,np
+            use inputs, only: mion,dx,Lo,omega_p,dy,vsw
+            use grid, only: qz,qy
             implicit none
             real:: ajc(nx,ny,nz,3), &     !aj at cell center
 !                   upc(nx,ny,nz,3), &   !up at cell center
                    gravc(nx,ny,nz), & !gravity at cell center
                    aa(3),bb(3),cc(3),aj3(3),up3(3),btc3(3), grav3, gradP3(3)    !dummy variables
             integer:: l,i,j,k,m,ip,jp,kp
-            
-            
+                        
             call face_to_center(aj,ajc)
+!            ajc(:,:,:,1) = ajc(:,:,:,1)/np(:,:,:)
+!            ajc(:,:,:,2) = ajc(:,:,:,2)/np(:,:,:)
+!            ajc(:,:,:,3) = ajc(:,:,:,3)/np(:,:,:)
 !            call face_to_center(up,upc)
 
 
@@ -207,20 +210,27 @@ module gutsp
                   cc(3) = aa(1)*bb(2) - aa(2)*bb(1)
                   
                   
-                  do m=1,2
-                        Ep(l,m) = cc(m) - gradP3(m) !add in electron pressure term
-                        Ep(l,m) = Ep(l,m) * mrat(l)
-                  enddo
-                  Ep(l,3) = cc(3) - gradP3(3) !add in electron pressure term
+!                  do m=1,2
+                        Ep(l,1) = cc(1) - gradP3(1) !- 0.1*omega_p*&
+!                                (0.5*(1.0+tanh((xp(l,2)-qy(ny-30))/(15*dy))) + &
+!                                 0.5*(1.0-tanh((xp(l,2)-qy(30))/(15*dy))))*(up3(1) - vsw*(tanh((xp(l,3)-qz(nz/2))/(Lo))))
+
+                        Ep(l,2) = cc(2) - gradP3(2)
+
+!                             2.0*exp(-(xp(l,3)-qz(nz))**2/(20*dx)**2)*(vp(l,m) - 0.0*up3(m)) - &
+!                             2.0*exp(-(xp(l,3)-qz(1))**2/(20*dx)**2)*(vp(l,m) - 0.0*up3(m)) !add in electron pressure term
+                        Ep(l,1) = Ep(l,1) * mrat(l)
+                        Ep(l,2) = Ep(l,2) * mrat(l)
+                        !*(1.0-exp(-(xp(l,3)-qz(nz))**2/(20*dx)**2))* &
+                        !     (1.0-exp(-(xp(l,3)-qz(1))**2/(20*dx)**2))
+!                  enddo
+                  Ep(l,3) = cc(3) - gradP3(3)! - &
+!                       2.0*exp(-(xp(l,3)-qz(nz))**2/(20*dx)**2)*(vp(l,3) - 0.0*up3(3)) - &
+!                       2.0*exp(-(xp(l,3)-qz(1))**2/(20*dx)**2)*(vp(l,3) - 0.0*up3(3))  !add in electron pressure term
                   Ep(l,3) = Ep(l,3) * mrat(l) + grav3*mrat(l)  ! Second term is for gravity
-!                  write(*,*) 'Electric field..............', Ep(l,m)*mrat(l)
-!                  write(*,*) 'Gravity field...............', grav3*mrat(l), gravc(2,2,2), sum(wght(l,:))
-!                  stop
-                 
 
                   
             enddo
-            !write(*,*) 'electric field, gravity....', maxval(Ep(:,:)), maxval(gravc(:,:,:))
             
       end subroutine get_Ep
       
@@ -1039,15 +1049,17 @@ module gutsp
       end subroutine update_rho
       
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      subroutine update_mixed(mixed,mix_cnt)
+      subroutine update_mixed()
 ! Weight density to eight nearest grid points
             use dimensions
             use MPI
-            use var_arrays, only: Ni_tot,ijkp,mix_ind
+            use mult_proc
+            use var_arrays, only: Ni_tot,ijkp,mix_ind,mixed
+            use boundary
             implicit none
-            real, intent(out):: mixed(nx,ny,nz), mix_cnt(nx,ny,nz)
             real:: recvbuf(nx*ny*nz)
             integer:: i,j,k,l,count,ierr
+            real:: mix_cnt(nx,ny,nz)
             
             count = nx*ny*nz
             
@@ -1055,21 +1067,26 @@ module gutsp
                   do j=1,ny
                         do k=1,nz
                               mixed(i,j,k) = 0.0
+                        enddo
+                  enddo
+            enddo
+            do i=1,nx
+                  do j=1,ny
+                        do k=1,nz
                               mix_cnt(i,j,k) = 0.0
                         enddo
                   enddo
             enddo
-            
+
             do l = 1, Ni_tot
                   i=ijkp(l,1)
                   j=ijkp(l,2)
                   k=ijkp(l,3)
                   
                   mixed(i,j,k) = mixed(i,j,k) + mix_ind(l)
-                  mix_cnt(i,j,k) = mix_cnt(i,j,k) + 1
-                  
+                  mix_cnt(i,j,k) = mix_cnt(i,j,k) + 1.0
             enddo
-            
+
             call MPI_BARRIER(MPI_COMM_WORLD,ierr)
             call MPI_ALLREDUCE(mixed(:,:,:),recvbuf,count,MPI_REAL,MPI_SUM,MPI_COMM_WORLD,ierr)
             
@@ -1080,7 +1097,13 @@ module gutsp
             
             mix_cnt(:,:,:) = reshape(recvbuf,(/nx,ny,nz/))
             
-            mixed(:,:,:) = mixed(:,:,:)/mix_cnt(:,:,:)
+            where(mix_cnt(:,:,:) .gt. 0.0)
+               mixed(:,:,:) = mixed(:,:,:)/mix_cnt(:,:,:)
+            endwhere
+
+            call add_boundary_scalar(mixed)
+            
+            call boundary_scalar(mixed)            
             
       end subroutine update_mixed
       
@@ -1245,8 +1268,11 @@ module gutsp
 !                        enddo
 !                  enddo
 !            enddo
+
             call boundary_vector(up)      
-!            call periodic(up)
+            !            call periodic(up)
+            
+            up(:,:,1,:) = up(:,:,2,:)
             
       end subroutine update_up
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1925,53 +1951,6 @@ module gutsp
 
             
       end subroutine get_pindex
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      
-      subroutine count_ppc()
-! Count the number of particles in each cell
-            use dimensions
-            use MPI
-            use mult_proc, only: my_rank
-            use grid, only: dx_grid,dy_grid,dz_grid
-            use boundary
-            use var_arrays, only: Ni_tot,ijkp
-            use inputs, only: out_dir
-            implicit none
-            real:: volb,ppcpp_count(nx,ny,nz),recvbuf(nx*ny*nz)
-            integer:: i,j,k,l,ierr,count
-            
-            count = nx*ny*nz
-            
-            do i=1,nx
-                  do j=1,ny
-                        do k=1,nz
-                              ppcpp_count(i,j,k)=0.0
-                        enddo
-                  enddo
-            enddo
-            
-            do l=1, Ni_tot
-                  i=ijkp(l,1)
-                  j=ijkp(l,2)
-                  k=ijkp(l,3)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!            
                   
-                  ppcpp_count(i,j,k) = ppcpp_count(i,j,k) + 1.0
-                  
-                  
-            enddo
-            
-            call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-            call MPI_ALLREDUCE(ppcpp_count(:,:,:),recvbuf,count,MPI_REAL,MPI_SUM,MPI_COMM_WORLD,ierr)
-            
-            ppcpp_count(:,:,:) = reshape(recvbuf,(/nx,ny,nz/))
-            
-            if (my_rank .eq. 0) then
-                  open(411,file=trim(out_dir)//'c.ppc.dat',status='unknown',form='unformatted')
-                  write(411) j
-                  write(411) ppcpp_count
-                  close(411)
-            endif
-            
-      end subroutine count_ppc
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!      
 end module gutsp

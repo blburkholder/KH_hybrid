@@ -7,7 +7,7 @@ module inputs
       
       real:: b0_init, nf_init,dt_frac, vsw, vth, Ni_tot_frac, dx_frac, &
             nu_init_frac,lambda_i,m_pu, mO, ppc, nu_init, ion_amu, load_rate, amp, &
-            height_stretch, zsf, etemp0, mion
+            height_stretch, zsf, etemp0, mion, va
       real, parameter:: amu=1.6605e-27!, mion = 3.841e-26
       integer:: mp, nt, nout, loc, grad, nrgrd, boundx
       integer(4):: Ni_tot_0
@@ -55,13 +55,14 @@ module inputs
       real:: omega_p                            !ion gyrofrequency
       
 !       Electron ion collision frequency
-      real, parameter:: lww2 = 1.00             !artificial diffusion for the magnetic field update
+      real, parameter:: lww2 = 1.0             !artificial diffusion for the magnetic field update
       real, parameter:: lww1 = (1-lww2)/6.0     !divide by six for nearest neighbor
       
 !       Density scaling paramter, alpha, and ion particle array dims
 
       real:: alpha
-      
+
+      real:: Omega_i
       
       contains
       
@@ -89,7 +90,7 @@ module inputs
                  read(100,*) vsw
                  write(*,*) 'vsw...............',vsw
                  read(100,*) vth
-                 write(*,*) 'vth...............',vth
+                 write(*,*) 'vth...............',vth !plasma beta
                  read(100,*) Ni_tot_frac
                  write(*,*) 'Ni_tot_frac.......',Ni_tot_frac
                  read(100,*) dx_frac
@@ -125,17 +126,20 @@ module inputs
             subroutine initparameters()
                   implicit none
                   
-                  
-                  
+                                  
                   mion = amu*ion_amu!3.841e-26
                   write(*,*) 'mion...',mion
                   
+                  !vth is input as the plasma beta
+                  vth = sqrt(vth*B0_init**2/(mu0*mion*nf_init/1e9))/1e3
+                  write(*,*) 'vth...',vth
+
                   omega_p = q*b0_init/mion
                   
                   lambda_i = (3e8/sqrt((nf_init*amp/1e9)*q*q/(8.85e-12*mion)))/1e3
                                     
                   dx= lambda_i*dx_frac
-                  dy=lambda_i*dx_frac           !units in km
+                  dy=2.0*lambda_i*dx_frac           !units in km
                   delz = lambda_i*dx_frac       !dz at release coordinates
                   
                   dt= dt_frac*mion/(q*b0_init)  !main time step
@@ -161,14 +165,14 @@ module inputs
                   vth_max = 3*vth
                   m_top = mion
                   m_bottom = mion
-                  Lo = 4.0*dx           !gradient scale length of boundary
+                  Lo = 2.0*dx           !gradient scale length of boundary
                   
                   nu_init = nu_init_frac*omega_p
                   
                   alpha = (mu0/1.0e3)*q*(q/mion)  !mH...determines particle scaling
                   
                   nrgrd = nint(grad*height_stretch)
-                  
+
             end subroutine initparameters
             
             
@@ -179,7 +183,7 @@ module inputs
                   implicit none
                   integer:: i,j,k
                   
-                  real*8:: ak, btot, a1, a2, womega, phi, deltat, va, cwpi
+                  real*8:: ak, btot, a1, a2, womega, phi, deltat, cwpi
                   
       ! Check input paramters
       
@@ -205,7 +209,7 @@ module inputs
                         if (deltat/dtsub_init .le. 2.0) then
                               write(*,*) 'deltat/dtsub....', deltat/dtsub_init
                               write(*,*) 'Field time stp too long...', i,j,k
-                              stop
+!                              stop
                         endif
                         enddo
                         enddo

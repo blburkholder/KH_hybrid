@@ -20,6 +20,7 @@ module Var_Arrays
                   nu(nx,ny,nz), &       !collision frequency
                   Ep(Ni_max,3), &       !Ion particle electric field
                   E(nx,ny,nz,3), &        !E field from electron mom. eq.
+                  Ec(nx,ny,nz,3), &
                   temp_p(nx,ny,nz), &   !temperature
                   mnp(nx,ny,nz), &      !mass density
                   beta, beta_p(Ni_max), &       !variable for particle scaling
@@ -32,10 +33,13 @@ module Var_Arrays
                   input_p(3), &
                   input_E, input_Eb, bndry_Eflux, prev_Etot, &
                   grav(nx,ny,nz), &            !gravity term
-                  gradP(nx,ny,nz,3)            !electron pressure gradient
+                  gradP(nx,ny,nz,3), &            !electron pressure gradient
+                  mixed(nx,ny,nz)              !Sum of mixed quantities
+
+
+
       
-      integer(4):: Ni_tot, Ni_tot_sys, Ni_init
-      integer::    vdist_init(-80:80,-80:80), vdist_add(-80:80,-80:80), vpp_init(-80:80,-80:80), vpp_add(-80:80,-80:80)
+      integer(4):: Ni_tot
       
       !Location (indices) of particles in the grid
       
